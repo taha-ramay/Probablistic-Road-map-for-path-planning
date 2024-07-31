@@ -1,0 +1,190 @@
+import numpy as np
+from matplotlib import pyplot as plt
+from matplotlib import cm
+from sklearn.neighbors import KDTree
+import cv2
+from matplotlib.patches import ConnectionPatch
+from matplotlib.pyplot import imread
+from queue import PriorityQueue
+
+def heuristic(point1, point2):
+    return np.linalg.norm(np.array(point1) - np.array(point2))
+
+def astar(graph, start, goal):
+    visited = set()
+    priority_queue = PriorityQueue()
+    priority_queue.put((0, start, []))
+
+    while not priority_queue.empty():
+        cost, current, path = priority_queue.get()
+
+        if current in visited:
+            continue
+
+        visited.add(current)
+
+        if current == goal:
+            return path + [current]
+
+        for neighbor in graph[current]:
+            if neighbor not in visited:
+                new_cost = cost + heuristic(current, neighbor)
+                priority_queue.put((new_cost, neighbor, path + [current]))
+
+    return None
+
+def is_line_obstacle(p1, p2, img):
+    line = np.linspace(p1, p2, 100).astype(int)
+    for pixel in line:
+        if img[pixel[1], pixel[0]] == 50:  # Assuming obstacles are in white
+            return True
+    return False
+
+def generate_grid_points(width, height, spacing):
+    x = np.arange(0, width, spacing)
+    y = np.arange(0, height, spacing)
+
+    grid_points = np.array(np.meshgrid(x, y)).T.reshape(-1, 2)
+
+    return grid_points
+
+
+
+def select_start_goal_points(ax, img):
+    print('Select a starting point')
+    ax.set_xlabel('Select a starting point')
+    occupied = True
+    while occupied:
+        points = plt.ginput(1, timeout=-1, show_clicks=False, mouse_pop=2)
+
+        if not points:
+            continue
+
+        point = points[0]
+        start = [round(point[0]), round(point[1])]
+
+        if (
+            0 <= start[0] < img.shape[1] and
+            0 <= start[1] < img.shape[0] and
+            img[int(start[1]), int(start[0])] == 255
+        ):
+            occupied = False
+            ax.plot(start[0], start[1], '.r')
+        else:
+            print('Cannot place a starting point there')
+            ax.set_xlabel('Cannot place a starting point there, choose another point')
+
+    # Similar code for the goal point
+    print('Select a goal point')
+    ax.set_xlabel('Select a goal point')
+    occupied = True
+    while occupied:
+        points = plt.ginput(1, timeout=-1, show_clicks=False, mouse_pop=2)
+
+        if not points:
+            continue
+
+        point = points[0]
+        goal = [round(point[0]), round(point[1])]
+
+        if (
+            0 <= goal[0] < img.shape[1] and
+            0 <= goal[1] < img.shape[0] and
+            img[int(goal[1]), int(goal[0])] == 255
+        ):
+            occupied = False
+            ax.plot(goal[0], goal[1], '.g')
+        else:
+            print('Cannot place a goal point there')
+            ax.set_xlabel('Cannot place a goal point there, choose another point')
+
+    plt.draw()
+    return start, goal
+
+
+def main():
+    # Load the image
+    #image = cv2.imread('./Taha_NCRA-Modefinall.png')
+    image = cv2.imread('NCRA1.png')
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+
+    # Define a linear transformation (increase contrast)
+    alpha = 1.5
+    beta = 50
+    img = cv2.convertScaleAbs(gray, alpha=alpha, beta=beta)
+
+    fig = plt.gcf()
+    fig.clf()
+    ax = fig.add_subplot(1, 1, 1)
+    ax.imshow(img, cmap=cm.Greys_r)
+
+    start, goal = select_start_goal_points(ax, img)
+
+    # Get image dimensions
+    height, width = img.shape
+
+    # Set the desired spacing between grid points
+    spacing = 30
+
+    # Generate grid-based points
+    grid_points = generate_grid_points(width, height, spacing)
+
+    # Include the start and goal points in the grid
+    grid_points = np.vstack([grid_points, start, goal])
+
+    # Create a KDTree for efficient nearest neighbor search
+    kdtree = KDTree(grid_points)
+
+    # Connect each point to its k nearest neighbors, avoiding obstacles
+    connections = []
+    k_nearest = 6  # Adjust this value as needed
+
+    for i in range(len(grid_points)):
+        point = grid_points[i]
+        _, indices = kdtree.query([point], k=k_nearest + 1)  # Include the point itself
+        indices = indices[0][1:]  # Exclude the point itself
+
+        for j in indices:
+            neighbor = grid_points[j]
+            if not is_line_obstacle(point, neighbor, img):
+                connections.append((point, neighbor))
+
+    # Plot the environment
+    fig = plt.gcf()
+    fig.clf()
+    ax = fig.add_subplot(1, 1, 1)
+    ax.imshow(img, cmap=cm.Greys_r)
+
+    # Plot the grid points
+    ax.scatter(grid_points[:, 0], grid_points[:, 1], color='red', marker='.')
+
+    # Plot the connections using ConnectionPatch
+    for connection in connections:
+        con = ConnectionPatch(
+            xyA=connection[0], xyB=connection[1],
+            coordsA="data", coordsB="data",
+            color="black", linestyle="-", linewidth=1
+        )
+        ax.add_patch(con)
+
+    # Apply A* to find the optimum path
+    graph = {tuple(p): [] for p in grid_points}
+    for connection in connections:
+        graph[tuple(connection[0])].append(tuple(connection[1]))
+        graph[tuple(connection[1])].append(tuple(connection[0]))
+
+    optimum_path = astar(graph, tuple(start), tuple(goal))
+
+    # Plot the optimum path
+    if optimum_path:
+        optimum_path = np.array(optimum_path)
+        ax.plot(optimum_path[:, 0], optimum_path[:, 1], color='blue', linewidth=2)
+
+    # Set axis to image dimensions
+    ax.axis('image')
+
+    # Show the plot
+    plt.show()
+
+if __name__ == "__main__":
+    main()
